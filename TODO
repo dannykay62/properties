@@ -1,0 +1,17 @@
+CreatePaymentPlan.js → for creating new plans.
+
+PaymentPlanList.js → for listing all plans with Edit and Delete buttons.
+
+EditPaymentPlan.js → for editing an existing plan.
+
+
+POST /api/payment-plans/ → Create a payment plan
+
+GET /api/payment-plans/ → List all payment plans
+
+GET /api/payment-plans/<id>/ → Get details of one
+
+PUT/PATCH /api/payment-plans/<id>/ → Update
+
+DELETE /api/payment-plans/<id>/ → Delete
+
