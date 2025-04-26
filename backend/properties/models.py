@@ -58,6 +58,7 @@ class Property(models.Model):
 
 
 class PaymentPlan(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='payment_plan')
     PLAN_CHOICES = (
         ('Instalment', 'Instalment'),
         ('Sponsorship', 'Sponsorship'),
@@ -92,7 +93,7 @@ class Payment(models.Model):
     reference = models.CharField(max_length=100, blank=True, null=True)  # Transaction ID etc
     status = models.CharField(max_length=50, choices=[
       ('pending', 'Pending'),
-      ('successfull', 'Successfull'),
+      ('successful', 'Successful'),
       ('failed', 'Failed'),
     ], default='successfull')
 

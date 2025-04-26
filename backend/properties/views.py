@@ -7,6 +7,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.forms import PasswordResetForm
+from decimal import Decimal, InvalidOperation
+from django.db.models import Sum, Count
 
 from .models import Property, User, PaymentPlan, Payment
 from .serializers import PropertySerializer, UserRegisterSerializer, UserLoginSerializer, PaymentPlanSerializer, UserSerializer, PaymentSerializer
@@ -72,46 +74,91 @@ def reset_password(request):
         return Response({"message": "Invalid email address."}, status=status.HTTP_400_BAD_REQUEST)
 
 
-class PaymentPlanViewSet(APIView):
+class PaymentPlanView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         payment_plans = PaymentPlan.objects.all().order_by('-created_at')
         serializer = PaymentPlanSerializer(payment_plans, many=True, context={'request' : request})
         return Response(serializer.data)
+    
+    def delete(self, request, plan_id=None, *args, **kwargs):
+        try:
+            plan = PaymentPlan.objects.get(pk=plan_id)
+            plan.delete()
+            return Response({'detail': 'Payment plan deleted successfully.'}, status=status.HTTP_204_NO_CONTENT)
+        except PaymentPlan.DoesNotExist:
+            return Response({'error': 'Payment plan not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+
+class UserPaymentPlansView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        # Allow registered user to see user's payment plan unless staff
+        if request.user.id != pk and not request.user.is_staff:
+            return Response({'error': 'Unauthorized access.'}, status=403)
+        
+        payment_plans = PaymentPlan.objects.filter(user__id=pk).order_by('-created_at')
+        serializer = PaymentPlanSerializer(payment_plans, many=True, context={'request': request})
+        return Response(serializer.data)
+
+
+class PaymentByProperties(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, property_id):
+        payments = Payment.objects.filter(payment_plan__property__id=property_id, status='successful')
+        serializer = PaymentSerializer(payments, many=True)
+        return Response(serializer.data)
+
+
+class PaymentView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        payments = Payment.objects.all().order_by('-payment_date')
+        serializer = PaymentSerializer(payments, many=True, context={'request': request})
+        return Response(serializer.data)
 
 
 class PaymentViewSet(viewsets.ModelViewSet):
-    queryset = Payment.objects.all()
+    queryset = Payment.objects.all().order_by('-payment_date')
     serializer_class = PaymentSerializer
     permission_classes = [permissions.IsAuthenticated]
 
-    @action(detail=True, method=['post'], url_path='make-payment')  # Frontend can call: POST /api/payment-plans/{id}/make-payment/
-    def make_payment(self, request, pk=None):
-        payment_plan = self.get_object()
-        amount = request.data.get('amount')
 
-        try:
-            amount = float(amount)
-        except (TypeError, ValueError):
-            return Response({"error": "Invalid amount."}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if amount <= 0:
-            return Response({"error": "Amount must be greater than 0."}, status=status.HTTP_400_BAD_REQUEST)
-        
-        if payment_plan.amount + amount > payment_plan.total_amount:
-            return Response({"error": "Payment exceeds total amount."}, status=status.HTTP_400_BAD_REQUEST)
-        
-        payment_plan.amount_paid += amount
-        payment_plan.save()
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def make_payment(request, plan_id):
+    payment_plan = get_object_or_404(PaymentPlan, pk=plan_id)
+    amount = request.data.get('amount')
+    try:
+        amount = Decimal(str(amount))
+    except (TypeError, ValueError):
+        return Response({"error": "Invalid amount."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    if amount <= 0:
+        return Response({"error": "Amount must be greater than 0."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    if payment_plan.amount_paid + amount > payment_plan.total_amount:
+        return Response({"error": "Payment exceeds total amount."}, status=status.HTTP_400_BAD_REQUEST)
+    
+    payment = Payment.objects.create(
+        payment_plan=payment_plan,
+        amount=amount,
+        method=request.data.get('method', 'bank_transfer'),
+        reference=request.data.get('reference', ''),
+        status='successful'
+    )
 
-        return Response({
-            "message": "Payment successful.",
-            "new_balance": payment_plan.balance()
-        }, status=status.HTTP_200_OK)
+    payment_plan.amount_paid += amount
+    payment_plan.save()
+
+    return Response({
+        "message": "Payment successful.",
+        "new_balance": payment_plan.total_amount - payment_plan.amount_paid
+    }, status=status.HTTP_200_OK)
 
 
 @api_view(['GET'])
@@ -180,3 +227,38 @@ class PropertyUploadView(APIView):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         print(serializer.errors) # To debug
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def report_summary(request):
+    total_properties = Property.objects.count()
+    total_plans = PaymentPlan.objects.count()
+    total_users = User.objects.count()
+    total_amount_paid = Payment.objects.filter(status='successful').aggregate(total=Sum('amount'))['total'] or 0
+
+    successful_count = Payment.objects.filter(status='successful').count()
+    pending_count = Payment.objects.filter(status='pending').count()
+    failed_count = Payment.objects.filter(status='failed').count()
+
+    recent_payments = Payment.objects.select_related('payment_plan').order_by('-payment_date')[:10]
+    recent_data = [
+        {
+            "user": payment.payment_plan.user.username if hasattr(payment.payment_plan, 'user') else 'N/A',
+            "amount": float(payment.amount),
+            "method": payment.method,
+            "status": payment.status,
+            "date": payment.payment_date.strftime('%Y-%m-%d'),
+        }
+        for payment in recent_payments
+    ]
+
+    return Response({
+        "total_properties": total_properties,
+        "total_payment_plans": total_plans,
+        "total_users": total_users,
+        "total_amount_paid": float(total_amount_paid),
+        "failed_payments": failed_count,
+        "recent_payments": recent_data
+    })
+
