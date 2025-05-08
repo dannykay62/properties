@@ -48,7 +48,7 @@ def login_user(request):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def property_list(request):
-    properties = Property.objects.all()
+    properties = Property.objects.all().order_by('-date_posted')
     serializer = PropertySerializer(properties, many=True)
     return Response(serializer.data)
 
@@ -170,13 +170,13 @@ def property_detail(request, pk):
 
 
 # CLASS-BASED VIEW: PUBLIC LIST
-class PropertyListView(APIView):
-    permission_classes = [AllowAny]
+# class PropertyListView(APIView):
+#     permission_classes = [AllowAny]
 
-    def get(self, request):
-        properties = Property.objects.all().order_by('-date_posted')
-        serializer = PropertySerializer(properties, many=True, context={'request' : request})
-        return Response(serializer.data)
+#     def get(self, request):
+#         properties = Property.objects.all().order_by('-date_posted')
+#         serializer = PropertySerializer(properties, many=True, context={'request' : request})
+#         return Response(serializer.data)
 
     
 
@@ -227,6 +227,32 @@ class PropertyUploadView(APIView):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         print(serializer.errors) # To debug
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def edit_property(request, pk):
+    try: 
+        property_obj = Property.objects.get(id=pk)
+    except Property.DoesNotExist:
+        return Response({"detail": "Property not found."}, status=status.HTTP_404_NOT_FOUND)
+    
+    serializer = PropertySerializer(property_obj, data=request.data, partial=True)
+
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    else:
+        return Response(serializer.error, status=status.HTTP_400_BAD_REQUEST)
+    
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def delete_property(request, pk):
+    property_obj = get_object_or_404(Property, pk=pk)
+
+    property_obj.delete()
+    return Response({"message": "Property deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
 
 
 @api_view(['GET'])

@@ -1,6 +1,6 @@
 from django.urls import path, include
 from . import views
-from .views import PropertyUploadView, PropertyListView, PaymentPlanView, PaymentViewSet, UserPaymentPlansView, PaymentByProperties
+from .views import PropertyUploadView, edit_property, PaymentPlanView, PaymentViewSet, UserPaymentPlansView, PaymentByProperties
 from djoser.views import UserViewSet
 from rest_framework.authtoken.views import obtain_auth_token
 from rest_framework.routers import DefaultRouter
@@ -8,12 +8,14 @@ from rest_framework.routers import DefaultRouter
 
 router = DefaultRouter()
 router.register(r'users', UserViewSet)
-# router.register(r'payment-plans', PaymentPlanViewSet, basename='payment-plan')
+# router.register(r'payment-plans', delete_property, PaymentPlanViewSet, basename='payment-plan')
 router.register(r'payments', PaymentViewSet)
 
 urlpatterns = [
     path('', views.property_list, name='property_list'),
-    path('all-properties/', views.PropertyListView.as_view(), name='property-list'),
+    path('edit-property/<int:pk>/', views.edit_property, name='edit_property'),
+    path('<int:pk>/delete/', views.delete_property, name='delete_property'),
+    # path('all-properties/', views.PropertyListView.as_view(), name='property-list'),
     path('<int:pk>/', views.property_detail, name='property_detail'),
     path('upload-property/', PropertyUploadView.as_view(), name='upload-property'),
 
